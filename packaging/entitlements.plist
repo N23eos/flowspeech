@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- py2app loads Python extension modules (.so) that are signed with OUR
+         Developer ID, not Apple's — without this the hardened runtime refuses
+         to dlopen them and the app dies on launch. Standard for Python apps. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- ctranslate2 / torch JIT need writable+executable memory. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Dictation: microphone capture. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Cloud ASR/LLM (optional for the user, but the binary must be allowed). -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

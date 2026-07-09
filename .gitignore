@@ -1,0 +1,27 @@
+# Environments & secrets
+.venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+.eggs/
+*.egg-info/
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+
+# Build artifacts
+build/
+dist/
+
+# Internal working notes (not for the public repo)
+.plan.md
+SPEC.md
+ROADMAP.md
+TASKS-OPUS.md
+AGENTS.md
+
+# macOS
+.DS_Store

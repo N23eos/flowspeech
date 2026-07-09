@@ -1,0 +1,160 @@
+# FlowSpeech
+
+A local, open-source alternative to Wispr Flow for macOS. Hold **right option** in any window, speak, release — clean, formatted text appears at your cursor.
+
+- Speech recognition runs **locally** (faster-whisper — free, no internet required).
+- Text cleanup (filler words, punctuation, mistakes) via Claude / OpenAI / DeepSeek / Ollama, switchable right from the menu bar.
+- Statistics: words, speed (WPM), top words, per-application breakdown.
+- Personal dictionary and feedback log.
+- Live waveform overlay on screen while recording.
+- Two modes: push-to-talk (hold) and toggle (short tap starts recording until the next tap).
+- Builds into a real FlowSpeech.app with its own icon and launch-at-login support.
+
+## Installation (one-time)
+
+```bash
+git clone https://github.com/<your-username>/flowspeech.git
+cd flowspeech
+
+# 1. Create the environment:
+uv venv --python 3.12 .venv
+uv pip install -r requirements.txt --python .venv/bin/python
+
+# 2. API keys (not needed for Ollama or the "none" cleanup mode):
+cp .env.example .env
+open -e .env   # paste your keys and save
+```
+
+### macOS permissions (required)
+
+System Settings → Privacy & Security:
+
+1. **Microphone** — allow for Terminal (it will ask on first launch).
+2. **Accessibility** — add Terminal (needed for the global hotkey and text insertion).
+
+Without the second one the hotkey won't work — this is the most common issue.
+
+## Running
+
+### Option A: as an app (recommended)
+
+```bash
+./build_app.sh            # dev build (fast)
+open dist/FlowSpeech.app
+# like it? move it to /Applications:
+cp -r dist/FlowSpeech.app /Applications/
+```
+
+Benefits: its own menu-bar icon, macOS asks Microphone/Accessibility permissions for FlowSpeech (not Terminal), and a "Launch at login" menu item.
+`./build_app.sh --full` builds a standalone .app you can distribute.
+
+In .app mode the config lives in `~/.flowspeech/config.yaml` (created automatically), API keys in `~/.flowspeech/.env`.
+
+### Option B: from the terminal
+
+```bash
+.venv/bin/python -m flowspeech.main
+```
+
+A 🎤 icon appears in the menu bar. The first launch downloads the Whisper model (~460 MB) — give it a minute.
+
+## Usage
+
+1. Place your cursor in any text field (Telegram, email, VS Code…).
+2. **Hold right option** (right ⌥) — you'll hear a pop and a live waveform appears at the bottom of the screen.
+3. Speak. Release the key — the text is inserted within 2–4 seconds.
+
+**Toggle mode for long dictations:** a short tap on the hotkey latches recording on — speak as long as you need, the next tap stops it.
+
+Menu bar:
+
+- Status line — "Today: N dictations · M words".
+- **7-day statistics** — dictations, words, speed, top words.
+- **Dictation history** — click to copy text to the clipboard.
+- **Cleanup provider** — Claude / OpenAI / DeepSeek / Ollama / no cleanup.
+- **Hotkey** — right ⌥ / ⌘ / ⇧ / ⌃ or F13–F15. The choice is saved to config.yaml and survives restarts.
+- **Settings…** — a window with tabs: General / Dictionary / Statistics.
+- **Launch at login** (in .app mode).
+
+## Configuration
+
+Everything lives in `config.yaml`:
+
+- `whisper.model` — `small` (fast) → `medium` (more accurate) → `large-v3` (best).
+- `whisper.language` — `auto`, or pin `ru` / `en` (slightly faster and more accurate). Only pin it if you dictate in a single language: with `ru` set, English speech goes to Whisper flagged as "Russian audio", and you may get a translation instead of a transcription.
+- `llm.provider` — the cleanup provider. Defaults to `none`: Whisper already produces punctuated text, and an LLM in this step can read the transcript as a message addressed to itself — dictate a question in English and the answer lands in your document. `formatter.py` guards against this with `<transcript>` tags, an explicit prompt, and a similarity check against what was said, but the only full guarantee is not calling the model. Enable cleanup from the menu bar if filler words bother you more.
+- For Ollama: run `ollama pull llama3.1` first; the server must be running.
+- `audio.tail_seconds` — extra recording after the key is released: the last audio block is still inside PortAudio when you release the hotkey. Without it, the tail of the last word gets clipped and short phrases like "one, two, three, testing" fail intermittently.
+
+The microphone opens only for the duration of a recording and closes right after — the orange indicator is lit exactly while you dictate, Bluetooth headsets don't fall into the headset profile, and a fresh stream per recording picks up the current input device.
+
+## Personal dictionary
+
+Whisper mangling your terms and names? Add them to `~/.flowspeech/dictionary.yaml`:
+
+```yaml
+words:
+  - FlowSpeech
+  - Kubernetes
+  - PostgreSQL
+```
+
+The words are hinted both to Whisper (during recognition) and to the LLM (during cleanup).
+
+## Statistics and feedback
+
+```bash
+.venv/bin/python stats_report.py       # 7-day report
+.venv/bin/python stats_report.py 30    # 30 days
+```
+
+Every dictation is logged to `~/.flowspeech/`:
+
+- `stats.db` — SQLite: time, words, WPM, application, language.
+- `feedback.jsonl` — "raw text → clean text" pairs. Review it to find dictionary candidates and weak spots in the prompt.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest tests/ -q
+```
+
+## How it works
+
+```
+right option pressed  → microphone recording (16 kHz)
+right option released → faster-whisper (local) → raw transcript
+    → LLM cleanup (selected provider) → clean text
+    → insertion: clipboard + Cmd+V (your clipboard is restored)
+    → stats to SQLite + feedback log
+```
+
+| File | Responsibility |
+|---|---|
+| `flowspeech/main.py` | menu bar, pipeline assembly |
+| `flowspeech/settings.py` | settings window (tabs) |
+| `setup.py` + `build_app.sh` | FlowSpeech.app build (py2app) |
+| `assets/make_icons.py` | icon generation (.icns + menu bar) |
+| `flowspeech/hotkey.py` | global push-to-talk listener |
+| `flowspeech/recorder.py` | microphone recording |
+| `flowspeech/transcriber.py` | local Whisper |
+| `flowspeech/formatter.py` | LLM cleanup (4 providers) |
+| `flowspeech/injector.py` | text insertion into the active window |
+| `flowspeech/stats.py` | statistics (SQLite) |
+| `flowspeech/dictionary.py` | personal dictionary |
+| `flowspeech/feedback.py` | raw/clean text log |
+
+## Troubleshooting
+
+- **Hotkey doesn't fire** — Terminal isn't added to Accessibility. Add it and restart the app.
+- **Text wasn't inserted** — some fields block Cmd+V (password fields). That's expected.
+- **Provider complains about a key** — check `.env`, restart the app.
+- **Slow** — set `whisper.model: small` and pin `language` in config.yaml.
+
+## Privacy
+
+Audio never leaves your machine unless you explicitly enable cloud transcription (`whisper.cloud: groq`) or an LLM cleanup provider. With `llm.provider: none` and local Whisper, everything is fully offline.
+
+## License
+
+[MIT](LICENSE)

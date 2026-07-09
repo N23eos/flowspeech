@@ -1,0 +1,189 @@
+"""Tests for the hotkey state machine in main.py.
+
+main.py pulls in rumps, AppKit, Quartz and pynput, none of which import on a
+headless box — and the state machine has nothing to do with any of them. Stub
+them, then build a FlowSpeechApp without running rumps.App.__init__ and drive
+the callbacks the way the listener thread would.
+
+The bug these tests pin down: stopping a latched recording with a tap fired
+_finish_recording twice — once from the key-down, once from the key-up, whose
+staleness check compared against the press time of the *starting* press. The
+second call reset the menu bar icon and hid the overlay mid-transcription.
+"""
+
+import sys
+import threading
+import types
+
+import pytest
+
+
+def _stub(name: str, **attrs) -> None:
+    module = types.ModuleType(name)
+    for key, value in attrs.items():
+        setattr(module, key, value)
+    sys.modules.setdefault(name, module)
+
+
+class _FakeMenuItem:
+    def __init__(self, title="", callback=None, icon=None):
+        self.title = title
+        self.callback = callback
+        self.icon = icon
+        self.state = False
+
+
+class _FakeApp:
+    def __init__(self, *args, **kwargs):
+        self.menu = []
+        self.icon = None
+        self.title = None
+
+
+def _install_stubs() -> None:
+    _stub("rumps", App=_FakeApp, MenuItem=_FakeMenuItem, alert=lambda *a, **k: None)
+    _stub("objc", super=super)
+    _stub(
+        "AppKit",
+        NSPasteboard=object, NSPasteboardTypeString="s", NSWorkspace=object,
+        NSOperationQueue=object, NSPanel=object, NSScreen=object, NSColor=object,
+        NSFont=object, NSTextField=object, NSView=object, NSBezierPath=object,
+        NSVisualEffectView=object,
+        NSBackingStoreBuffered=0, NSStatusWindowLevel=0,
+        NSWindowStyleMaskBorderless=0, NSTextAlignmentCenter=1,
+    )
+    _stub("Foundation", NSMakeRect=lambda *a: None, NSTimer=object)
+    _stub("Quartz", CGEventSourceCreate=lambda *a: None)
+    keyboard = types.SimpleNamespace(
+        Key=types.SimpleNamespace(
+            alt_r="alt_r", cmd_r="cmd_r", shift_r="shift_r", ctrl_r="ctrl_r",
+            f13="f13", f14="f14", f15="f15",
+        ),
+        Listener=object,
+    )
+    _stub("pynput", keyboard=keyboard)
+    _stub("pynput.keyboard", **vars(keyboard))
+
+
+_install_stubs()
+
+from flowspeech import main as fsmain  # noqa: E402
+
+
+@pytest.fixture
+def app(monkeypatch):
+    """A FlowSpeechApp with only the state-machine fields wired up."""
+    instance = object.__new__(fsmain.FlowSpeechApp)
+    instance._state_lock = threading.RLock()
+    instance._state = fsmain.STATE_IDLE
+    instance._mode = fsmain.MODE_DICTATION
+    instance._selection = None
+    instance._latched = False
+    instance._swallow_release = False
+    instance._press_started = 0.0
+    instance.finishes = 0
+    instance.begins = 0
+    instance.modes = []
+
+    def begin(mode=fsmain.MODE_DICTATION):
+        instance.begins += 1
+        instance.modes.append(mode)
+        instance._state = fsmain.STATE_RECORDING
+        instance._mode = mode
+        instance._press_started = fsmain.time.time()
+
+    def finish():
+        instance.finishes += 1
+        if instance._state == fsmain.STATE_RECORDING:
+            instance._state = fsmain.STATE_PROCESSING
+            instance._latched = False
+
+    monkeypatch.setattr(instance, "_begin_recording", begin)
+    monkeypatch.setattr(instance, "_finish_recording", finish)
+    return instance
+
+
+def _hold(app, seconds: float) -> None:
+    app._on_hotkey_down()
+    app._press_started -= seconds  # pretend the key was held that long
+    app._on_hotkey_up()
+
+
+def test_push_to_talk_records_once_and_finishes_once(app):
+    _hold(app, 1.0)
+
+    assert (app.begins, app.finishes) == (1, 1)
+    assert app._state == fsmain.STATE_PROCESSING
+
+
+def test_short_tap_latches_instead_of_finishing(app):
+    _hold(app, 0.1)
+
+    assert app.begins == 1
+    assert app.finishes == 0
+    assert app._latched
+    assert app._state == fsmain.STATE_RECORDING
+
+
+def test_second_tap_stops_a_latched_recording_exactly_once(app):
+    _hold(app, 0.1)          # latch on
+    app._on_hotkey_down()    # the stopping tap
+    app._on_hotkey_up()      # its release must be swallowed
+
+    assert app.finishes == 1, "the release re-entered _finish_recording"
+    assert app.begins == 1
+    assert app._state == fsmain.STATE_PROCESSING
+    assert not app._swallow_release
+
+
+def test_keypress_during_processing_is_ignored(app):
+    _hold(app, 1.0)
+    assert app._state == fsmain.STATE_PROCESSING
+
+    _hold(app, 1.0)
+
+    assert (app.begins, app.finishes) == (1, 1)
+
+
+def test_release_without_a_press_is_ignored(app):
+    app._on_hotkey_up()
+
+    assert (app.begins, app.finishes) == (0, 0)
+
+
+def test_command_hotkey_starts_command_mode(app):
+    app._on_command_hotkey_down()
+    app._press_started -= 1.0
+    app._on_command_hotkey_up()
+
+    assert app.modes == [fsmain.MODE_COMMAND]
+    assert (app.begins, app.finishes) == (1, 1)
+
+
+def test_other_hotkey_stops_a_running_recording_exactly_once(app):
+    # Dictation is latched on; a command-key tap stops it (the capture's mode
+    # was fixed at start), and the command key's release must be swallowed too.
+    _hold(app, 0.1)                  # dictation latched
+    app._on_command_hotkey_down()    # stop tap from the OTHER key
+    app._on_command_hotkey_up()
+
+    assert app.finishes == 1
+    assert app.modes == [fsmain.MODE_DICTATION]
+    assert app._state == fsmain.STATE_PROCESSING
+
+
+def test_latched_recording_survives_a_stray_release(app):
+    _hold(app, 0.1)  # latched
+    app._on_hotkey_up()  # e.g. a repeated release event from the OS
+
+    assert app.finishes == 0
+    assert app._state == fsmain.STATE_RECORDING
+
+
+def test_hold_after_a_completed_dictation_starts_a_new_one(app):
+    _hold(app, 1.0)
+    app._state = fsmain.STATE_IDLE  # the worker thread finished
+
+    _hold(app, 1.0)
+
+    assert (app.begins, app.finishes) == (2, 2)

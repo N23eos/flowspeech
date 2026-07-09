@@ -1,0 +1,112 @@
+# FlowSpeech configuration.
+# API keys are NOT stored here — put them in .env or export as environment variables:
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY
+
+hotkey: right_option  # hold to record and release to insert; a short tap latches
+                      # recording on until the next tap
+
+# Command Mode: выдели текст, зажми клавишу, продиктуй команду («сократи»,
+# «переведи на английский») — выделенное перепишется на месте. Без выделения —
+# вопрос → ответ в позицию курсора. Требует llm.provider ≠ none.
+# Пустая строка ("") отключает. Не должен совпадать с hotkey.
+command_hotkey: right_command
+
+audio:
+  # Дозапись после отпускания клавиши: последний блок ещё лежит внутри
+  # PortAudio, когда ты отпускаешь хоткей. Без этого хвост последнего слова
+  # обрезается и Whisper на коротких фразах возвращает пустоту.
+  # Микрофон открывается на время записи и сразу закрывается.
+  tail_seconds: 0.25
+
+whisper:
+  model: small        # tiny | base | small | medium | large-v3 (bigger = slower + more accurate)
+  # auto | ru | en | ...  Жёсткий язык чуть быстрее и точнее, но если диктовать
+  # по-английски при language: ru, Whisper получает указание «аудио русское» —
+  # точность падает, иногда вместо транскрипции получается перевод.
+  language: auto
+  device: auto        # auto | cpu | cuda
+  # Облачное распознавание: groq = whisper-large-v3-turbo через Groq API
+  # (быстрее и точнее локального; при ошибке сети — фолбэк на локальную модель).
+  # none = всегда локально (офлайн, аудио не покидает компьютер).
+  cloud: groq
+
+llm:
+  # Which provider cleans up the transcript. Switchable from the menu bar too.
+  # claude | openai | deepseek | groq | ollama | none  ("none" = insert raw Whisper text)
+  #
+  # none по умолчанию. whisper-large-v3-turbo и так возвращает текст с пунктуацией
+  # и заглавными, а любая LLM в этом шаге читает транскрипт как обращение к себе:
+  # продиктуешь по-английски вопрос — получишь в документ ответ на него.
+  # formatter.py защищается тегами, промптом и проверкой ответа, но единственная
+  # настоящая гарантия — не звать модель вообще. Цена: остаются слова-паразиты.
+  provider: none
+  claude:
+    model: claude-haiku-4-5-20251001
+  openai:
+    model: gpt-4o-mini
+    base_url: https://api.openai.com/v1
+  deepseek:
+    model: deepseek-chat
+    base_url: https://api.deepseek.com/v1
+  groq:
+    model: llama-3.3-70b-versatile
+    base_url: https://api.groq.com/openai/v1
+  ollama:
+    model: llama3.1
+    base_url: http://localhost:11434/v1
+
+# Стиль очистки под конкретное приложение. Имя активного приложения (то, куда
+# вставляется текст) сопоставляется с ключами по подстроке без учёта регистра
+# ("Code" совпадёт с "Visual Studio Code" и наоборот). Значение — короткая фраза,
+# которая добавляется в промпт очистки отдельной строкой правил. Ключ default —
+# для всех остальных приложений. Работает только при llm.provider ≠ none
+# (без LLM очистки нет, и секция просто игнорируется).
+app_styles:
+  Slack: "casual, short, no formal greetings"
+  Telegram: "casual, short, no formal greetings"
+  Mail: "formal business tone"
+  "Visual Studio Code": "verbatim, no sentence rewriting"
+  default: ""
+
+# Режимы (пресеты) очистки. Выбираются в меню-баре → подменю «Режим». Имя —
+# то, что видно в меню; значение — фрагмент, который добавляется в промпт
+# очистки и задаёт общий тон. «Обычный» с пустым значением — нейтральный режим
+# по умолчанию. Режим комбинируется со стилем приложения (app_styles): режим —
+# общий тон, app_style — уточнение. Как и app_styles, работает только при
+# llm.provider ≠ none. Можно добавлять свои режимы.
+modes:
+  Обычный: ""
+  Формальный: "formal register, complete sentences, no slang or contractions"
+  Разговорный: "casual and conversational; contractions and informal phrasing are fine"
+  Код: "verbatim technical dictation: keep code, identifiers and symbols exactly, minimal rewriting"
+  Письмо: "well-structured prose suitable for an email or letter, with greeting and sign-off if dictated"
+
+# Авто-перевод (SPEC §A4): для каждого языка ниже в подменю «Режим» появляется
+# пункт «Перевод → <язык>». Значение — инструкция модели. Особый режим:
+# продиктованное переводится (даже если это вопрос), проверка пересечения слов
+# отключается, остаётся только защита от слишком длинного ответа. Требует
+# llm.provider ≠ none — без LLM перевести нечем: покажется подсказка, а сырой
+# текст всё равно вставится (диктовка не теряется).
+translate_to:
+  English: "Translate the dictation into natural, idiomatic English."
+  Русский: "Translate the dictation into natural, idiomatic Russian."
+
+# Сколько дней хранить ТЕКСТЫ диктовок (история и feedback.jsonl):
+#   0  — не хранить тексты (при старте старые тексты стираются),
+#   N  — хранить N дней (при старте всё старее N дней стирается),
+#   -1 — хранить всегда.
+# По умолчанию 30. Агрегированная статистика (слова, скорость) сохраняется
+# всегда — стираются только сами тексты. Ротация выполняется при запуске.
+history_retention_days: 30
+
+paths:
+  data_dir: ~/.flowspeech   # stats.db, dictionary.yaml, feedback.jsonl live here
+
+# Приватный режим (SPEC §4.3): 100% офлайн. Управляется пунктом меню
+# «🔒 Приватный режим» — руками не редактируй. При включении FlowSpeech
+# принудительно ставит whisper.cloud: none и llm.provider: ollama/none, а сюда
+# записывает прежние значения, чтобы вернуть их при выключении.
+private_mode:
+  enabled: false
+  saved_cloud: none
+  saved_provider: none
