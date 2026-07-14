@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/readme-header.png" alt="" width="480"></p>
+
 # FlowSpeech
 
 A local, open-source alternative to Wispr Flow for macOS. Hold **right option** in any window, speak, release — clean, formatted text appears at your cursor.
@@ -158,3 +160,10 @@ Audio never leaves your machine unless you explicitly enable cloud transcription
 ## License
 
 [MIT](LICENSE)
+
+## Support
+
+If this project was useful to you, feel free to support further development:
+
+[![ETH](https://img.shields.io/badge/ETH-0x7777...88C4-blue?logo=ethereum&style=flat-square)](https://etherscan.io/address/0x77777da54702AC8789D53fc7cC6201C29a1A88C4)
+[![Donate](https://img.shields.io/badge/donate-crypto-orange?style=flat-square)](https://etherscan.io/address/0x77777da54702AC8789D53fc7cC6201C29a1A88C4)
